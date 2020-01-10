@@ -422,7 +422,8 @@ DROP PROCEDURE IF EXISTS RANDOM_ROWS;
 CREATE PROCEDURE RANDOM_ROWS  (IN src_tbl_name varchar(255),
                                IN out_tbl_name varchar(255),
                                IN num_rows int,
-                               IN replacement varchar(20)
+                               IN replacement varchar(20),
+                               IN where_clause varchar(255)
                                )
 
 /*
@@ -472,7 +473,7 @@ BEGIN
     DECLARE src_prim_key_fld VARCHAR(255);
     DECLARE src_prim_key_type VARCHAR(255);
 
-    SET @count = 0;
+    SET @the_count = 0;
     SET @rand_key_val = '';
 
     -- Drop table to hold final output rows:
@@ -539,7 +540,9 @@ BEGIN
 
     SET unique_checks=0; SET foreign_key_checks=0;
     SET @copy_tables_cmd = concat('INSERT INTO __picker_table__ ',
-                                  'SELECT ', @src_tbl_col_names, ' FROM ', src_tbl_name, ';');
+                                  'SELECT ', @src_tbl_col_names, ' FROM ', src_tbl_name,
+                                  IF(where_clause is NULL, '', concat(' WHERE ', where_clause)),
+                                  ';');
     PREPARE stmt FROM @copy_tables_cmd;
     EXECUTE stmt;
     DEALLOCATE PREPARE stmt;
@@ -552,8 +555,19 @@ BEGIN
 
     SET unique_checks=1; SET foreign_key_checks=1;
 
+    -- Check whether there even *are* num_rows qualifying
+    -- rows in the picker table (maybe the WHERE clause
+    -- excluded some. @num_rows will have the num of rows:
+
+    SET @check_size_cmd = concat('SELECT COUNT(*) FROM __picker_table__ INTO @num_eligible_rows;');
+    PREPARE stmt FROM @check_size_cmd;
+    EXECUTE stmt;
+    DEALLOCATE PREPARE stmt;
+
+    SET num_rows = LEAST(num_rows, @num_eligible_rows);
+
     -- Fill the output table with the samples:
-    WHILE @count < num_rows DO
+    WHILE @the_count < num_rows DO
 
        -- Put one random int from 0 to src_table size into
        -- rand_key_val
@@ -565,10 +579,12 @@ BEGIN
 
        SET @add_one_rand_row = concat('INSERT INTO ', out_tbl_name,
                                       ' SELECT ', @src_tbl_col_names, ' FROM __picker_table__
-                                         WHERE __new_id__ = "', @rand_key_val, '";');
+                                         WHERE __new_id__ = ', @rand_key_val, 
+                                         ';');
+
        PREPARE insert_one FROM @add_one_rand_row;
        EXECUTE insert_one;
-       SET @count = @count + 1;
+       SET @the_count = @the_count + 1;
 
        -- Remove picked sample if not 'with-replacement':
        IF replacement != 'replace' AND replacement != 'with replacement'
@@ -581,7 +597,7 @@ BEGIN
 
     DROP TABLE __picker_table__;
 
-    DEALLOCATE PREPARE insert_one;
+    -- *********DEALLOCATE PREPARE insert_one;
 END;// # RANDOM_ROWS
 
 
@@ -615,11 +631,15 @@ BEGIN
 
    SET @result = '';
 
-   SELECT group_concat(column_name separator ',') 
+   SELECT group_concat(column_name
+                       order by ordinal_position
+                       separator ',') 
      FROM information_schema.columns  
      WHERE table_schema = @db 
        AND table_name   = tbl_name
-     GROUP by NULL INTO @result;
+     GROUP by NULL
+     INTO @result;
+     
 
    IF length(@result) = 0
    THEN
