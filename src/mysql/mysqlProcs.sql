@@ -427,17 +427,24 @@ CREATE PROCEDURE RANDOM_ROWS  (IN src_tbl_name varchar(255),
                                )
 
 /*
-    Given a source table src_tbl_name, sample a num_rows random rows.
-    The result will be deposited into a result table out_tbl_name.
+    Given a source table src_tbl_name, sample num_rows random rows.
+    The result will be deposited into a specified result table out_tbl_name.
     Sampling can be executed with or without replacement. The source
     table remains unchanged either way.
 
     The result table will be created to match the source table.
-    Replacement policy is specified as follows: if parameter
-    replacement is 'replace' or 'with replacement', then sampled
-    rows are replaced into the source. All other values, such as
-    'without replacement', or 'no replacement' signal that sampled
-    values will not be replaced.
+    Replacement policy is specified as follows: 
+       o if parameter replacement is 'replace' or 'with replacement', 
+         then sampled rows are replaced into the source. 
+       o All other values, such as 'without replacement', or 'no replacement' 
+         signal that sampled values will not be replaced.
+
+    The where_clause parameter, in non-NULL must be a legal SQL 'where'
+    clause, which restricts the rows elegible for the random selection.
+
+    Example:
+
+       *****
 
     Strategy:
       - Copy the source table to a temporary table that includes
@@ -622,6 +629,9 @@ CREATE function COLUMN_NAMES(db_name varchar(255),
 */
 
 BEGIN
+
+   DECLARE result LONGTEXT DEFAULT '';
+
    IF db_name IS NULL
    THEN 
        SELECT database() INTO @db;
@@ -629,7 +639,7 @@ BEGIN
        SET @db = db_name;
    END IF;
 
-   SET @result = '';
+   SET SESSION group_concat_max_len = 65000;
 
    SELECT group_concat(column_name
                        order by ordinal_position
@@ -638,17 +648,16 @@ BEGIN
      WHERE table_schema = @db 
        AND table_name   = tbl_name
      GROUP by NULL
-     INTO @result;
+     INTO result;
      
-
-   IF length(@result) = 0
+   IF length(result) = 0
    THEN
        SET @txt = CONCAT('Table ', tbl_name, ' not found in database ', @db, '.');
        SIGNAL SQLSTATE '45000'
        SET MESSAGE_TEXT = @txt;
    END IF;
 
-    RETURN @result;
+    RETURN result;
 end;//
 
 
